@@ -53,7 +53,7 @@ import http from 'http';
 import cors from 'cors';
 import { promises as fsPromises } from 'fs';
 import { spawn } from 'child_process';
-import pty from 'node-pty';
+let pty = null;
 import fetch from 'node-fetch';
 import mime from 'mime-types';
 
@@ -972,6 +972,22 @@ function handleShellConnection(ws) {
                     }
 
                     console.log('🔧 Executing shell command:', shellCommand);
+
+                    // Try to load node-pty if not already loaded
+                    if (!pty) {
+                        try {
+                            const ptyModule = await import('node-pty');
+                            pty = ptyModule.default || ptyModule;
+                            console.log('✅ node-pty loaded successfully');
+                        } catch (error) {
+                            console.error('❌ node-pty is not available. Terminal features are disabled.', error.message);
+                            ws.send(JSON.stringify({
+                                type: 'error',
+                                data: 'Terminal features are not available. The node-pty module failed to load. Please ensure you have the required build tools installed.'
+                            }));
+                            return;
+                        }
+                    }
 
                     // Use appropriate shell based on platform
                     const shell = os.platform() === 'win32' ? 'powershell.exe' : 'bash';

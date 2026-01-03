@@ -1723,7 +1723,7 @@ async function startServer() {
             console.log(`${c.warn('[WARN]')} Note: Requests will be proxied to Vite dev server at ${c.dim('http://localhost:' + (process.env.VITE_PORT || 5173))}`);
         }
 
-        server.listen(PORT, '0.0.0.0', async () => {
+        server.listen(PORT, '127.0.0.1', async () => {
             const appInstallPath = path.join(__dirname, '..');
 
             console.log('');
@@ -1731,7 +1731,7 @@ async function startServer() {
             console.log(`  ${c.bright('Claude Code UI Server - Ready')}`);
             console.log(c.dim('═'.repeat(63)));
             console.log('');
-            console.log(`${c.info('[INFO]')} Server URL:  ${c.bright('http://0.0.0.0:' + PORT)}`);
+            console.log(`${c.info('[INFO]')} Server URL:  ${c.bright('http://localhost:' + PORT)}`);
             console.log(`${c.info('[INFO]')} Installed at: ${c.dim(appInstallPath)}`);
             console.log(`${c.tip('[TIP]')}  Run "cloudcli status" for full configuration details`);
             console.log('');

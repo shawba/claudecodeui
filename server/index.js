@@ -84,7 +84,7 @@ const connectedClients = new Set();
 // Setup file system watcher for Claude projects folder using chokidar
 async function setupProjectsWatcher() {
     const chokidar = (await import('chokidar')).default;
-    const claudeProjectsPath = path.join(process.env.HOME, '.claude', 'projects');
+    const claudeProjectsPath = path.join(os.homedir(), '.claude', 'projects');
 
     if (projectsWatcher) {
         projectsWatcher.close();
@@ -462,7 +462,7 @@ app.post('/api/projects/create', authenticateToken, async (req, res) => {
 });
 
 // Browse filesystem endpoint for project suggestions - uses existing getFileTree
-app.get('/api/browse-filesystem', authenticateToken, async (req, res) => {    
+app.get('/api/browse-filesystem', authenticateToken, async (req, res) => {
     try {
         const { path: dirPath } = req.query;
         
@@ -510,9 +510,9 @@ app.get('/api/browse-filesystem', authenticateToken, async (req, res) => {
             suggestions.push(...directories);
         }
         
-        res.json({ 
+        res.json({
             path: targetPath,
-            suggestions: suggestions 
+            suggestions: suggestions
         });
         
     } catch (error) {
@@ -717,12 +717,41 @@ wss.on('connection', (ws, request) => {
     }
 });
 
+/**
+ * WebSocket Writer - Wrapper for WebSocket to match SSEStreamWriter interface
+ */
+class WebSocketWriter {
+  constructor(ws) {
+    this.ws = ws;
+    this.sessionId = null;
+    this.isWebSocketWriter = true;  // Marker for transport detection
+  }
+
+  send(data) {
+    if (this.ws.readyState === 1) { // WebSocket.OPEN
+      // Providers send raw objects, we stringify for WebSocket
+      this.ws.send(JSON.stringify(data));
+    }
+  }
+
+  setSessionId(sessionId) {
+    this.sessionId = sessionId;
+  }
+
+  getSessionId() {
+    return this.sessionId;
+  }
+}
+
 // Handle chat WebSocket connections
 function handleChatConnection(ws) {
     console.log('[INFO] Chat WebSocket connected');
 
     // Add to connected clients for project updates
     connectedClients.add(ws);
+
+    // Wrap WebSocket with writer for consistent interface with SSEStreamWriter
+    const writer = new WebSocketWriter(ws);
 
     ws.on('message', async (message) => {
         try {
@@ -734,19 +763,19 @@ function handleChatConnection(ws) {
                 console.log('🔄 Session:', data.options?.sessionId ? 'Resume' : 'New');
 
                 // Use Claude Agents SDK
-                await queryClaudeSDK(data.command, data.options, ws);
+                await queryClaudeSDK(data.command, data.options, writer);
             } else if (data.type === 'cursor-command') {
                 console.log('[DEBUG] Cursor message:', data.command || '[Continue/Resume]');
                 console.log('📁 Project:', data.options?.cwd || 'Unknown');
                 console.log('🔄 Session:', data.options?.sessionId ? 'Resume' : 'New');
                 console.log('🤖 Model:', data.options?.model || 'default');
-                await spawnCursor(data.command, data.options, ws);
+                await spawnCursor(data.command, data.options, writer);
             } else if (data.type === 'codex-command') {
                 console.log('[DEBUG] Codex message:', data.command || '[Continue/Resume]');
                 console.log('📁 Project:', data.options?.projectPath || data.options?.cwd || 'Unknown');
                 console.log('🔄 Session:', data.options?.sessionId ? 'Resume' : 'New');
                 console.log('🤖 Model:', data.options?.model || 'default');
-                await queryCodex(data.command, data.options, ws);
+                await queryCodex(data.command, data.options, writer);
             } else if (data.type === 'cursor-resume') {
                 // Backward compatibility: treat as cursor-command with resume and no prompt
                 console.log('[DEBUG] Cursor resume session (compat):', data.sessionId);
@@ -754,7 +783,7 @@ function handleChatConnection(ws) {
                     sessionId: data.sessionId,
                     resume: true,
                     cwd: data.options?.cwd
-                }, ws);
+                }, writer);
             } else if (data.type === 'abort-session') {
                 console.log('[DEBUG] Abort session request:', data.sessionId);
                 const provider = data.provider || 'claude';
@@ -769,21 +798,21 @@ function handleChatConnection(ws) {
                     success = await abortClaudeSDKSession(data.sessionId);
                 }
 
-                ws.send(JSON.stringify({
+                writer.send({
                     type: 'session-aborted',
                     sessionId: data.sessionId,
                     provider,
                     success
-                }));
+                });
             } else if (data.type === 'cursor-abort') {
                 console.log('[DEBUG] Abort Cursor session:', data.sessionId);
                 const success = abortCursorSession(data.sessionId);
-                ws.send(JSON.stringify({
+                writer.send({
                     type: 'session-aborted',
                     sessionId: data.sessionId,
                     provider: 'cursor',
                     success
-                }));
+                });
             } else if (data.type === 'check-session-status') {
                 // Check if a specific session is currently processing
                 const provider = data.provider || 'claude';
@@ -799,12 +828,12 @@ function handleChatConnection(ws) {
                     isActive = isClaudeSDKSessionActive(sessionId);
                 }
 
-                ws.send(JSON.stringify({
+                writer.send({
                     type: 'session-status',
                     sessionId,
                     provider,
                     isProcessing: isActive
-                }));
+                });
             } else if (data.type === 'get-active-sessions') {
                 // Get all currently active sessions
                 const activeSessions = {
@@ -812,17 +841,17 @@ function handleChatConnection(ws) {
                     cursor: getActiveCursorSessions(),
                     codex: getActiveCodexSessions()
                 };
-                ws.send(JSON.stringify({
+                writer.send({
                     type: 'active-sessions',
                     sessions: activeSessions
-                }));
+                });
             }
         } catch (error) {
             console.error('[ERROR] Chat WebSocket error:', error.message);
-            ws.send(JSON.stringify({
+            writer.send({
                 type: 'error',
                 error: error.message
-            }));
+            });
         }
     });
 
@@ -1002,7 +1031,7 @@ function handleShellConnection(ws) {
                         name: 'xterm-256color',
                         cols: termCols,
                         rows: termRows,
-                        cwd: process.env.HOME || (os.platform() === 'win32' ? process.env.USERPROFILE : '/'),
+                        cwd: os.homedir(),
                         env: {
                             ...process.env,
                             TERM: 'xterm-256color',
